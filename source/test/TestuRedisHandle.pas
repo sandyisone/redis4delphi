@@ -40,7 +40,7 @@ type
 
 const
   C_Key_Pre = '主键:';
-  C_Value_Pre = '值:';
+  C_Value_Pre = '"值": ';
 
   C_List_Key = '主键:list';
 

@@ -53,7 +53,6 @@ type
     property ResponseList: TStringList read FResponseList;
 
 
-
     ////////////////////////////////////////////////////////////////////////////
     ///                     命令
     //使用Password认证
@@ -83,8 +82,6 @@ type
     function ListLen(aKey: string): Integer;
     //获取list范围数据,获取后数据并不会被删除
     function ListRange(aKey: string; aBegin, aEnd: Integer; var aRetValues: TStringList): Integer;
-
-
 
 
     ////////////////////////////////////////////////////////////////////////////
@@ -218,6 +215,8 @@ end;
 
 procedure TRedisHandle.RedisAuth;
 begin
+  Connection := True;
+
   //AUTH <password>
   FCmdList.Clear;
   FCmdList.Add('AUTH');
@@ -233,6 +232,8 @@ end;
 
 procedure TRedisHandle.StringDel(aKey: String);
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('DEL');
   FCmdList.Add(aKey);
@@ -248,6 +249,8 @@ function TRedisHandle.StringGet(aKey: string): string;
 var
   aCount: Integer;
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('GET');
   FCmdList.Add(aKey);
@@ -302,6 +305,8 @@ end;
 
 procedure TRedisHandle.StringSet(aKey, aValue: String; aExpireSec: Int64);
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('SET');
   FCmdList.Add(aKey);
@@ -323,6 +328,8 @@ end;
 
 procedure TRedisHandle.RedisSelect();
 begin
+  Connection := True;
+
   //SELECT index
   FCmdList.Clear;
   FCmdList.Add('SELECT');
@@ -348,6 +355,8 @@ function TRedisHandle.ListRange(aKey: string; aBegin, aEnd: Integer;
 var
   i: Integer;
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('LRANGE');
   FCmdList.Add(aKey);
@@ -375,6 +384,8 @@ end;
 
 function TRedisHandle.ListLen(aKey: string): Integer;
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('LLEN');
   FCmdList.Add(aKey);
@@ -392,6 +403,8 @@ end;
 
 function TRedisHandle.ListLPop(aKey: string): string;
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('LPOP');
   FCmdList.Add(aKey);
@@ -410,6 +423,8 @@ end;
 
 function TRedisHandle.ListRPush(aKey, aValue: string): Integer;
 begin
+  Connection := True;
+
   FCmdList.Clear;
   FCmdList.Add('RPUSH');
   FCmdList.Add(aKey);
@@ -458,7 +473,6 @@ var
   aBuff: TBytes;
   i: Integer;
 begin
-  Connection := True;
 
   //参数个数
   aCmd := '*' + IntToStr(aCmdList.Count) + C_CRLF;
@@ -487,6 +501,10 @@ begin
       FTcpClient.Host := FIp;
       FTcpClient.Port := FPort;
       FTcpClient.Connect;
+
+      if Password <> '' then RedisAuth;
+      if Db <> 0 then RedisSelect;
+
     end
     else
     begin
