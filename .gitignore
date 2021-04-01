@@ -1,3 +1,5 @@
 
 *.identcache
 __history
+/dcu/*.dcu
+/bin/*.exe
