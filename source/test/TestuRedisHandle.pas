@@ -24,16 +24,21 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
-    procedure TestStrSet;
-    procedure TestStrSetExpire;
-    procedure TestStrGet;
-    procedure TestStrDel;
+    procedure TestStringSetExpire;
+    procedure TestStringGetSet;
+
+    procedure TestKey;
+
 
     procedure TestListRPush;
+    procedure TestListRPop;
+
+    procedure TestListLPush;
     procedure TestListLPop;
 
     procedure TestListLen;
     procedure TestListRange;
+    procedure TestListRemove;
 
 
   end;
@@ -43,20 +48,17 @@ const
   C_Value_Pre = '"值": ';
 
   C_List_Key = '主键:list';
+  C_List_Value_Pre = '值-list-';
 
 implementation
 
 procedure TestTRedisHandle.SetUp;
 begin
   FRedisHandle := TRedisHandle.Create();
-  FRedisHandle.Ip := '127.0.0.1';
+  FRedisHandle.Ip := '192.168.1.3';
   FRedisHandle.Port := 6379;
   FRedisHandle.Password := 'tcrq1234';
   FRedisHandle.Db := 1;
-
-  FRedisHandle.Connection := True;
-  FRedisHandle.RedisAuth;
-  FRedisHandle.RedisSelect;
 
 end;
 
@@ -94,11 +96,27 @@ begin
 end;
 
 
+procedure TestTRedisHandle.TestListLPush;
+var
+  i: Integer;
+  aValue: String;
+begin
+  for i := 0 to 9 do
+  begin
+    aValue := C_List_Value_Pre + IntToStr(i);
+    FRedisHandle.ListLPush(C_List_Key, aValue);
+
+    Status(C_List_Key + ' List LPush:' + aValue);
+  end;
+
+  FRedisHandle.ListLPush(C_List_Key, ['111','222','333']);
+
+end;
+
 procedure TestTRedisHandle.TestListRange;
 var
   aLen: Integer;
   aValues: TStringList;
-  i: Integer;
 begin
   aLen := FRedisHandle.ListLen(C_List_Key);
   Status(C_List_Key + ' len: ' + IntToStr(aLen));
@@ -114,6 +132,35 @@ begin
 
 end;
 
+procedure TestTRedisHandle.TestListRemove;
+var
+  i, aRemoveCount: Integer;
+  aValue: String;
+begin
+  for i := 0 to 9 do
+  begin
+    aValue := C_List_Value_Pre + IntToStr(i);
+    aRemoveCount := FRedisHandle.ListRemove(C_List_Key, aValue, 2);
+
+    Status(C_List_Key + ' Remove ' + aValue + ' count:' + IntToStr(aRemoveCount));
+  end;
+
+end;
+
+procedure TestTRedisHandle.TestListRPop;
+var
+  aValue: String;
+begin
+
+  while True do
+  begin
+    aValue := FRedisHandle.ListRPop(C_List_Key);
+    if aValue = '' then Break;
+    Status(aValue);
+  end;
+
+end;
+
 procedure TestTRedisHandle.TestListRPush;
 var
   i: Integer;
@@ -121,64 +168,64 @@ var
 begin
   for i := 0 to 9 do
   begin
-    aValue := '值-list-' + IntToStr(i);
+    aValue := C_List_Value_Pre + IntToStr(i);
     FRedisHandle.ListRPush(C_List_Key, aValue);
 
     Status(C_List_Key + ' List RPush:' + aValue);
   end;
 
+  FRedisHandle.ListRPush(C_List_Key, ['111','222','333']);
+
 end;
 
-procedure TestTRedisHandle.TestStrDel;
+procedure TestTRedisHandle.TestKey;
 var
   aKey: string;
-  i: Integer;
 begin
-  for i := 0 to 9 do
-  begin
-    aKey := C_Key_Pre + IntToStr(i);
-    FRedisHandle.StringDel(aKey);
 
-    Status('Del ' + aKey);
-  end;
+  aKey := C_Key_Pre + IntToStr(100);
 
-end;
+  FRedisHandle.StringSet(aKey, '123');
+  CheckTrue(FRedisHandle.KeyExist(aKey), 'KeyExist Fail');
+  Status('KeyExist ok');
 
-procedure TestTRedisHandle.TestStrGet;
-var
-  aKey, aValue: string;
-  i: Integer;
-begin
-  for i := 0 to 9 do
-  begin
-    aKey := C_Key_Pre + IntToStr(i);
-    aValue := FRedisHandle.StringGet(aKey);
+  FRedisHandle.KeySetExpire(aKey, 2);
+  Sleep(2010);
+  CheckTrue(not FRedisHandle.KeyExist(aKey), 'KeyExist Fail');
+  Status('KeySetExpire ok');
 
-    Status('Get ' + aKey + ' : ' + aValue);
-  end;
+  FRedisHandle.StringSet(aKey, '123');
+  FRedisHandle.KeyDelete(aKey);
+  CheckTrue(not FRedisHandle.KeyExist(aKey), 'KeyDelete Fail');
+
+  Status('KeyDelete ok');
 
 end;
 
 
 
-procedure TestTRedisHandle.TestStrSet;
+procedure TestTRedisHandle.TestStringGetSet;
 var
-  aValue: string;
-  aKey: string;
+  aKey, aValue, aNewValue: string;
   i: Integer;
 begin
   for i := 0 to 9 do
   begin
     aKey := C_Key_Pre + IntToStr(i);
-    aValue := C_Value_Pre + IntToStr(i);
+    aNewValue := 'new:' + IntToStr(i);
+    aValue := 'old:' + IntToStr(i);
+
     FRedisHandle.StringSet(aKey, aValue);
+    CheckTrue(aValue = FRedisHandle.StringGetSet(aKey, aNewValue));
 
-    Status('Set ' + aKey + ' : ' + aValue);
+    CheckTrue(aNewValue = FRedisHandle.StringGet(aKey), 'StringGetSet fail');
+    Status(aKey + ' : ' + aValue + ',' + aNewValue);
   end;
 
 end;
 
-procedure TestTRedisHandle.TestStrSetExpire;
+
+procedure TestTRedisHandle.TestStringSetExpire;
 var
   aValue: string;
   aKey: string;

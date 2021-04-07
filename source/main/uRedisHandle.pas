@@ -1,5 +1,5 @@
 {
-  redis 处理类
+  redis for delphi
 }
 
 unit uRedisHandle;
@@ -34,13 +34,17 @@ type
 
     function GetConnection: Boolean;
     procedure SetConnection(const Value: Boolean);
-
+    //异常
     procedure RaiseErr(aErr: string);
 
     //组装并发送命令
     procedure SendCmds(aCmdList: TStringList);
     //读取应答并解析
     procedure ReadAndParseResponse(var aResponseList: TStringList);
+    //获取String应答，无返回空
+    function ReadStringResponse(): string;
+    //获取Integer应答，无返回0
+    function ReadIntegerResponse(): Integer;
 
     procedure NewTcpClient;
   public
@@ -60,28 +64,73 @@ type
     //选择Db数据库，默认使用0号数据库
     procedure RedisSelect();
 
+
     ////////////////////////////////////////////////////////////////////////////
     ///               String
-    //Get
+    //Redis DEL 命令用于删除已存在的键。不存在的 key 会被忽略。
+    procedure KeyDelete(aKey: String);
+    //Redis EXISTS 命令用于检查给定 key 是否存在。
+    function KeyExist(aKey: String): Boolean;
+    //Redis Expire 命令用于设置 key 的过期时间，key 过期后将不再可用。单位以秒计。
+    procedure KeySetExpire(aKey: String; aExpireSec: Integer);
+    ////////////////////////////////////////////////////////////////////////////
+
+
+    ////////////////////////////////////////////////////////////////////////////
+    ///               String
+    //Redis Get 命令用于获取指定 key 的值。如果 key 不存在，返回 nil 。如果key 储存的值不是字符串类型，返回一个错误。
     function StringGet(aKey: string): string;
-    //Set
+    //Redis SET 命令用于设置给定 key 的值。如果 key 已经存储其他值， SET 就覆写旧值，且无视类型。
     procedure StringSet(aKey, aValue: String); overload;
+    //Redis Getset 命令用于设置指定 key 的值，并返回 key 的旧值。
+    function StringGetSet(aKey, aValue: String): String;
+
     //set 带超时（秒）
     procedure StringSet(aKey, aValue: String; aExpireSec: Int64); overload;
-    //Del
-    procedure StringDel(aKey: String);
+    ////////////////////////////////////////////////////////////////////////////
+
+
 
     ////////////////////////////////////////////////////////////////////////////
     ///               List
     //list队尾插入值，返回新的list长度
-    function ListRPush(aKey, aValue: string): Integer;
-    //弹出list第一个数据，无数据返回空
+    //Redis Rpush 命令用于将一个或多个值插入到列表的尾部(最右边)。
+    //如果列表不存在,一个空列表会被创建并执行RPUSH 操作。当列表存在但不是列表类型时返回一个错误
+    //Insert all the specified values at the tail of the list stored at key.
+    //If key does not exist, it is created as empty list before performing the push operation.
+    //When key holds a value that is not a list, an error is returned.
+    function ListRPush(aKey, aValue: string): Integer; overload;
+    function ListRPush(aKey: string; aValues: array of string): Integer; overload;
+
+    //Redis Lpush 命令将一个或多个值插入到列表头部。 如果 key 不存在，
+    //一个空列表会被创建并执行 LPUSH 操作。 当 key 存在但不是列表类型时，返回一个错误。
+    function ListLPush(aKey, aValue: string): Integer; overload;
+    function ListLPush(aKey: string; aValues: array of string): Integer; overload;
+
+
+    //Redis Rpop 命令用于移除列表的最后一个元素，返回值为移除的元素，无数据返回空。
+    function ListRPop(aKey: string): string;
+    //Redis Lpop 命令用于移除并返回列表的第一个元素，无数据返回空。
     function ListLPop(aKey: string): string;
 
     //获取list大小
     function ListLen(aKey: string): Integer;
     //获取list范围数据,获取后数据并不会被删除
     function ListRange(aKey: string; aBegin, aEnd: Integer; var aRetValues: TStringList): Integer;
+
+    //Redis Lrem 根据参数 COUNT 的值，移除列表中与参数 VALUE 相等的元素,返回移除数据个数
+    //COUNT 的值可以是以下几种：
+    //count > 0 : 从表头开始向表尾搜索，移除与 VALUE 相等的元素，数量为 COUNT 。
+    //count < 0 : 从表尾开始向表头搜索，移除与 VALUE 相等的元素，数量为 COUNT 的绝对值。
+    //count = 0 : 移除表中所有与 VALUE 相等的值。
+    //Removes the first count occurrences of elements equal to element from the list stored at key
+    //The count argument influences the operation in the following ways:
+    //count > 0: Remove elements equal to element moving from head to tail.
+    //count < 0: Remove elements equal to element moving from tail to head.
+    //count = 0: Remove all elements equal to element.
+    function ListRemove(aKey, aValue: string; aCount: Integer): Integer;
+    ////////////////////////////////////////////////////////////////////////////
+
 
 
     ////////////////////////////////////////////////////////////////////////////
@@ -213,6 +262,24 @@ end;
 
 
 
+function TRedisHandle.ReadIntegerResponse: Integer;
+begin
+  //读取应答并解析
+  ReadAndParseResponse(FResponseList);
+
+  Result := StrToInt(FResponseList.Strings[1]);
+end;
+
+function TRedisHandle.ReadStringResponse: string;
+begin
+  //读取应答并解析
+  ReadAndParseResponse(FResponseList);
+
+  if StrToInt(FResponseList.Strings[1]) <= 0 then Exit('');
+
+  Result := FResponseList.Strings[2];
+end;
+
 procedure TRedisHandle.RedisAuth;
 begin
   Connection := True;
@@ -230,24 +297,8 @@ begin
 
 end;
 
-procedure TRedisHandle.StringDel(aKey: String);
-begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('DEL');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-end;
 
 function TRedisHandle.StringGet(aKey: string): string;
-var
-  aCount: Integer;
 begin
   Connection := True;
 
@@ -258,15 +309,29 @@ begin
   //发送名称
   SendCmds(FCmdList);
 
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  aCount := StrToInt(FResponseList.Strings[1]);
-
-  if aCount <= 0 then Exit('');
-  Result := FResponseList.Strings[2];
+  //读取应答
+  Result := ReadStringResponse();
 
 end;
+
+
+function TRedisHandle.StringGetSet(aKey, aValue: String): String;
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('GETSET');
+  FCmdList.Add(aKey);
+  FCmdList.Add(aValue);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答
+  Result := ReadStringResponse();
+
+end;
+
 
 
 {
@@ -296,7 +361,6 @@ end;
   performed because the user specified the NX or XX option but the condition
   was not met, or if the user specified the GET option and there was no previous
   value for the key.
-
 }
 procedure TRedisHandle.StringSet(aKey, aValue: String);
 begin
@@ -350,6 +414,56 @@ begin
 end;
 
 
+procedure TRedisHandle.KeyDelete(aKey: String);
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('DEL');
+  FCmdList.Add(aKey);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答并解析
+  ReadAndParseResponse(FResponseList);
+end;
+
+function TRedisHandle.KeyExist(aKey: String): Boolean;
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('EXISTS');
+  FCmdList.Add(aKey);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答并解析
+  Result := ReadIntegerResponse() <> 0;
+
+end;
+
+procedure TRedisHandle.KeySetExpire(aKey: String; aExpireSec: Integer);
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('EXPIRE');
+  FCmdList.Add(aKey);
+  FCmdList.Add(IntToStr(aExpireSec));
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答并解析
+  ReadAndParseResponse(FResponseList);
+
+
+
+end;
+
 function TRedisHandle.ListRange(aKey: string; aBegin, aEnd: Integer;
   var aRetValues: TStringList): Integer;
 var
@@ -382,6 +496,27 @@ begin
 
 end;
 
+function TRedisHandle.ListRemove(aKey, aValue: string; aCount: Integer): Integer;
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('LREM');
+  FCmdList.Add(aKey);
+  FCmdList.Add(IntToStr(aCount));
+  FCmdList.Add(aValue);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答并解析
+  ReadAndParseResponse(FResponseList);
+
+  Result := StrToInt(FResponseList.Strings[1]);
+end;
+
+
+
 function TRedisHandle.ListLen(aKey: string): Integer;
 begin
   Connection := True;
@@ -394,9 +529,7 @@ begin
   SendCmds(FCmdList);
 
   //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  Result := StrToInt(FResponseList.Strings[1]);
+  Result := ReadIntegerResponse();
 
 end;
 
@@ -412,32 +545,86 @@ begin
   //发送名称
   SendCmds(FCmdList);
 
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  if StrToInt(FResponseList.Strings[1]) <= 0 then Exit('');
-
-  Result := FResponseList.Strings[2];
+  //读取应答
+  Result := ReadStringResponse();
 
 end;
 
-function TRedisHandle.ListRPush(aKey, aValue: string): Integer;
+function TRedisHandle.ListLPush(aKey, aValue: string): Integer;
 begin
+  Result := ListLPush(aKey, [aValue]);
+end;
+
+function TRedisHandle.ListLPush(aKey: string;
+  aValues: array of string): Integer;
+var
+  i: Integer;
+begin
+  if Length(aValues) <= 0 then RaiseErr('无数据');
+
   Connection := True;
 
   FCmdList.Clear;
-  FCmdList.Add('RPUSH');
+  FCmdList.Add('LPUSH');
   FCmdList.Add(aKey);
-  FCmdList.Add(aValue);
+  for i := 0 to Length(aValues) - 1 do
+    FCmdList.Add(aValues[i]);
 
   //发送名称
   SendCmds(FCmdList);
 
   //读取应答并解析
-  ReadAndParseResponse(FResponseList);
+  Result := ReadIntegerResponse();
 
-  Result := StrToInt(FResponseList.Strings[1]);
 end;
+
+function TRedisHandle.ListRPop(aKey: string): string;
+begin
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('RPOP');
+  FCmdList.Add(aKey);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答
+  Result := ReadStringResponse();
+end;
+
+
+
+
+function TRedisHandle.ListRPush(aKey, aValue: string): Integer;
+begin
+  Result := ListRPush(aKey, [aValue]);
+end;
+
+
+function TRedisHandle.ListRPush(aKey: string;
+  aValues: array of string): Integer;
+var
+  i: Integer;
+begin
+  if Length(aValues) <= 0 then RaiseErr('无数据');
+
+  Connection := True;
+
+  FCmdList.Clear;
+  FCmdList.Add('RPUSH');
+  FCmdList.Add(aKey);
+  for i := 0 to Length(aValues) - 1 do
+    FCmdList.Add(aValues[i]);
+
+  //发送名称
+  SendCmds(FCmdList);
+
+  //读取应答并解析
+  Result := ReadIntegerResponse();
+
+end;
+
 
 
 
