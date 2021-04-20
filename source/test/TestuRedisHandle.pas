@@ -18,17 +18,20 @@ type
   // Test methods for class TRedisHandle
 
   TestTRedisHandle = class(TTestCase)
-  strict private
+  strict protected
     FRedisHandle: TRedisHandle;
+  protected
+    procedure InitHandle;
   public
+
     procedure SetUp; override;
     procedure TearDown; override;
+
   published
     procedure TestStringSetExpire;
     procedure TestStringGetSet;
 
     procedure TestKey;
-
 
     procedure TestListRPush;
     procedure TestListRPop;
@@ -39,7 +42,6 @@ type
     procedure TestListLen;
     procedure TestListRange;
     procedure TestListRemove;
-
 
   end;
 
@@ -52,13 +54,20 @@ const
 
 implementation
 
+procedure TestTRedisHandle.InitHandle;
+begin
+  FRedisHandle.Password := 'tcrq1234';
+  FRedisHandle.Db := 0;
+
+  FRedisHandle.Ip := '192.168.1.3';
+  FRedisHandle.Port := 6379;
+end;
+
 procedure TestTRedisHandle.SetUp;
 begin
   FRedisHandle := TRedisHandle.Create();
-  FRedisHandle.Ip := '192.168.1.3';
-  FRedisHandle.Port := 6379;
-  FRedisHandle.Password := 'tcrq1234';
-  FRedisHandle.Db := 1;
+
+  InitHandle();
 
 end;
 

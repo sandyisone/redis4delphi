@@ -21,7 +21,11 @@ uses
   GUITestRunner,
   TextTestRunner,
   uRedisHandle in '..\main\uRedisHandle.pas',
-  TestuRedisHandle in 'TestuRedisHandle.pas';
+  TestuRedisHandle in 'TestuRedisHandle.pas',
+  uRedisClusterHandle in '..\main\uRedisClusterHandle.pas',
+  uRedisCommand in '..\main\uRedisCommand.pas',
+  uRedisCommon in '..\main\uRedisCommon.pas',
+  TestuRedisClusterHandle in 'TestuRedisClusterHandle.pas';
 
 {$R *.RES}
 

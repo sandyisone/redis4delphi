@@ -7,48 +7,67 @@ unit uRedisHandle;
 interface
 
 uses
-  Classes, IdTCPClient, SysUtils, StrUtils, IdException;
+  Classes, IdTCPClient, SysUtils, StrUtils, IdException, uRedisCommand,
+  uRedisCommon;
 
 
 type
 
-  RedisException = class(Exception);
+  //redis handle exception
+  ERedisException = class(Exception);
+  //redis应答错误信息
+  ERedisErrorReply = class(Exception);
 
+  //当redis应答错误时，回调此函数，如isHandled返回true，则提示成功，否则弹异常
+  TOnGetRedisError = procedure(aRedisCommand: TRedisCommand;
+      var aResponseList: TStringList; aErr: string; var isHandled: Boolean) of object;
+
+  //
   TRedisHandle = class
   private
-    FTcpClient: TIdTCPClient;
-    FPort: Integer;
     FPassword: string;
-    FIp: string;
     FDb: Integer;
+    FPort: Integer;
+    FIp: string;
     FReadTimeout: Integer;
-    procedure SetIp(const Value: string);
+    FOnGetRedisError: TOnGetRedisError;
     procedure SetPassword(const Value: string);
-    procedure SetPort(const Value: Integer);
     procedure SetDb(const Value: Integer);
+    procedure SetIp(const Value: string);
+    procedure SetPort(const Value: Integer);
     procedure SetReadTimeout(const Value: Integer);
-
+    procedure SetOnGetRedisError(const Value: TOnGetRedisError);
   protected
-    FCmdList: TStringList;
+    //命令行
+    FRedisCommand: TRedisCommand;
     FResponseList: TStringList;
+    //tcp
+    FTcpClient: TIdTCPClient;
 
     function GetConnection: Boolean;
     procedure SetConnection(const Value: Boolean);
+    //tcp
+    procedure NewTcpClient;
+
     //异常
     procedure RaiseErr(aErr: string);
 
+    //组装并发送命令 无数据返回
+    procedure SendCommandWithNoResponse(aRedisCommand: TRedisCommand);
+    //获取String应答，无返回空
+    function SendCommandWithStrResponse(aRedisCommand: TRedisCommand): string;
+    //获取Integer应答，无返回0
+    function SendCommandWithIntResponse(aRedisCommand: TRedisCommand): Integer;
+
+
+
     //组装并发送命令
-    procedure SendCmds(aCmdList: TStringList);
+    procedure SendCommand(aRedisCommand: TRedisCommand);
     //读取应答并解析
     procedure ReadAndParseResponse(var aResponseList: TStringList);
-    //获取String应答，无返回空
-    function ReadStringResponse(): string;
-    //获取Integer应答，无返回0
-    function ReadIntegerResponse(): Integer;
 
-    procedure NewTcpClient;
   public
-    constructor Create(aReadTimeOut: Integer = 5000);
+    constructor Create(); virtual;
     destructor Destroy; override;
 
     //连接
@@ -56,6 +75,9 @@ type
     //应答
     property ResponseList: TStringList read FResponseList;
 
+    //发送命令解析应答
+    procedure SendCommandAndGetResponse(aRedisCommand: TRedisCommand;
+      var aResponseList: TStringList);
 
     ////////////////////////////////////////////////////////////////////////////
     ///                     命令
@@ -64,9 +86,8 @@ type
     //选择Db数据库，默认使用0号数据库
     procedure RedisSelect();
 
-
     ////////////////////////////////////////////////////////////////////////////
-    ///               String
+    ///                     Key
     //Redis DEL 命令用于删除已存在的键。不存在的 key 会被忽略。
     procedure KeyDelete(aKey: String);
     //Redis EXISTS 命令用于检查给定 key 是否存在。
@@ -77,7 +98,7 @@ type
 
 
     ////////////////////////////////////////////////////////////////////////////
-    ///               String
+    ///                     String
     //Redis Get 命令用于获取指定 key 的值。如果 key 不存在，返回 nil 。如果key 储存的值不是字符串类型，返回一个错误。
     function StringGet(aKey: string): string;
     //Redis SET 命令用于设置给定 key 的值。如果 key 已经存储其他值， SET 就覆写旧值，且无视类型。
@@ -90,9 +111,8 @@ type
     ////////////////////////////////////////////////////////////////////////////
 
 
-
     ////////////////////////////////////////////////////////////////////////////
-    ///               List
+    ///                     List
     //list队尾插入值，返回新的list长度
     //Redis Rpush 命令用于将一个或多个值插入到列表的尾部(最右边)。
     //如果列表不存在,一个空列表会被创建并执行RPUSH 操作。当列表存在但不是列表类型时返回一个错误
@@ -106,7 +126,6 @@ type
     //一个空列表会被创建并执行 LPUSH 操作。 当 key 存在但不是列表类型时，返回一个错误。
     function ListLPush(aKey, aValue: string): Integer; overload;
     function ListLPush(aKey: string; aValues: array of string): Integer; overload;
-
 
     //Redis Rpop 命令用于移除列表的最后一个元素，返回值为移除的元素，无数据返回空。
     function ListRPop(aKey: string): string;
@@ -132,60 +151,55 @@ type
     ////////////////////////////////////////////////////////////////////////////
 
 
-
     ////////////////////////////////////////////////////////////////////////////
-    //redis 服务ip
+    //redis ip
     property Ip: string read FIp write SetIp;
-    //redis 端口
+    //redis port
     property Port: Integer read FPort write SetPort;
+    //redis 读超时
+    property ReadTimeout: Integer read FReadTimeout write SetReadTimeout;
+
     //redis 密码
     property Password: string read FPassword write SetPassword;
     //redis 数据库
     property Db: Integer read FDb write SetDb;
-    //
-    property ReadTimeout: Integer read FReadTimeout write SetReadTimeout;
+    //当redis应答错误时，回调此函数，如isHandled返回true，则提示成功，否则弹异常
+    property OnGetRedisError: TOnGetRedisError read FOnGetRedisError write SetOnGetRedisError;
   end;
-
-
-const
-  //回车换行
-  C_CRLF = #$0D#$0A;
-
 
 
 implementation
 
 { TRedisHandle }
 
-constructor TRedisHandle.Create(aReadTimeOut: Integer);
+constructor TRedisHandle.Create();
 begin
-  FIp := '127.0.0.1';
-  FPort := 6379;
+  FIp := Redis_Default_Ip;
+  FPort := Redis_Default_Port;
   FPassword := '';
   FDb := 0;
-  FReadTimeout := aReadTimeOut;
 
-  NewTcpClient;
-
-  FCmdList := TStringList.Create;
+  FRedisCommand := TRedisCommand.Create;
   FResponseList := TStringList.Create;
 
+  NewTcpClient;
 end;
 
 destructor TRedisHandle.Destroy;
 begin
   FTcpClient.Free;
-
-  FCmdList.Free;
+  FRedisCommand.Free;
   FResponseList.Free;
 
   inherited;
 end;
 
+
 procedure TRedisHandle.RaiseErr(aErr: string);
 begin
-  raise RedisException.Create(aErr);
+  raise ERedisException.Create(aErr);
 end;
+
 
 procedure TRedisHandle.ReadAndParseResponse(var aResponseList: TStringList);
 var
@@ -239,7 +253,7 @@ begin
   if aRetType = '-' then
   begin
     //错误回复（error reply）的第一个字节是 "-"
-    RaiseErr(TEncoding.UTF8.GetString(aBuff, 1, aLen - 2));
+    raise ERedisErrorReply.Create(TEncoding.UTF8.GetString(aBuff, 1, aLen - 2));
   end;
 
   aResponseList.Clear;
@@ -260,108 +274,40 @@ begin
 
 end;
 
-
-
-function TRedisHandle.ReadIntegerResponse: Integer;
-begin
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  Result := StrToInt(FResponseList.Strings[1]);
-end;
-
-function TRedisHandle.ReadStringResponse: string;
-begin
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  if StrToInt(FResponseList.Strings[1]) <= 0 then Exit('');
-
-  Result := FResponseList.Strings[2];
-end;
-
 procedure TRedisHandle.RedisAuth;
+var
+  aCommand: TRedisCommand;
 begin
-  Connection := True;
 
-  //AUTH <password>
-  FCmdList.Clear;
-  FCmdList.Add('AUTH');
-  FCmdList.Add(FPassword);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
+  aCommand := TRedisCommand.Create;
+  try
+    //AUTH <password>
+    aCommand.Clear.Add('AUTH').Add(FPassword);
+    //发送,读取应答并解析
+    SendCommandWithNoResponse(aCommand);
+  finally
+    aCommand.Free;
+  end;
 
 end;
 
 
 function TRedisHandle.StringGet(aKey: string): string;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('GET');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答
-  Result := ReadStringResponse();
-
+  FRedisCommand.Clear.Add('GET').Add(aKey);
+  //发送,读取应答并解析
+  Result := SendCommandWithStrResponse(FRedisCommand);
 end;
 
 
 function TRedisHandle.StringGetSet(aKey, aValue: String): String;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('GETSET');
-  FCmdList.Add(aKey);
-  FCmdList.Add(aValue);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答
-  Result := ReadStringResponse();
-
+  FRedisCommand.Clear.Add('GETSET').Add(aKey).Add(aValue);
+  //发送,读取应答并解析
+  Result := SendCommandWithStrResponse(FRedisCommand);
 end;
 
 
-
-{
-  Set key to hold the string value. If key already holds a value, it is overwritten,
-  regardless of its type. Any previous time to live associated with the key
-  is discarded on successful SET operation.
-
-  Options
-  The SET command supports a set of options that modify its behavior:
-
-  EX seconds -- Set the specified expire time, in seconds.
-  PX milliseconds -- Set the specified expire time, in milliseconds.
-  EXAT timestamp-seconds -- Set the specified Unix time at which the key will expire, in seconds.
-  PXAT timestamp-milliseconds -- Set the specified Unix time at which the key will expire, in milliseconds.
-  NX -- Only set the key if it does not already exist.
-  XX -- Only set the key if it already exist.
-  KEEPTTL -- Retain the time to live associated with the key.
-  GET -- Return the old value stored at key, or nil when key did not exist.
-  Note: Since the SET command options can replace SETNX, SETEX, PSETEX, GETSET,
-  it is possible that in future versions of Redis these commands will be deprecated and finally removed.
-
-  Return value
-  Simple string reply: OK if SET was executed correctly.
-  Bulk string reply: when GET option is set, the old value stored at key,
-  or nil when key did not exist.
-  Null reply: a Null Bulk Reply is returned if the SET operation was not
-  performed because the user specified the NX or XX option but the condition
-  was not met, or if the user specified the GET option and there was no previous
-  value for the key.
-}
 procedure TRedisHandle.StringSet(aKey, aValue: String);
 begin
   StringSet(aKey, aValue, -1);
@@ -369,42 +315,31 @@ end;
 
 procedure TRedisHandle.StringSet(aKey, aValue: String; aExpireSec: Int64);
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('SET');
-  FCmdList.Add(aKey);
-  FCmdList.Add(aValue);
+  FRedisCommand.Clear.Add('SET').Add(aKey).Add(aValue);
   if aExpireSec > 0 then
   begin
-    FCmdList.Add('EX');
-    FCmdList.Add(IntToStr(aExpireSec));
+    FRedisCommand.Add('EX').Add(IntToStr(aExpireSec));
   end;
 
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
+  //发送,读取应答并解析
+  SendCommandWithNoResponse(FRedisCommand);
 
 end;
 
 
 procedure TRedisHandle.RedisSelect();
+var
+  aCommand: TRedisCommand;
 begin
-  Connection := True;
-
-  //SELECT index
-  FCmdList.Clear;
-  FCmdList.Add('SELECT');
-  FCmdList.Add(IntToStr(FDb));
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
+  aCommand := TRedisCommand.Create;
+  try
+    //SELECT index
+    aCommand.Clear.Add('SELECT').Add(IntToStr(FDb));
+    //发送,读取应答并解析
+    SendCommandWithNoResponse(aCommand);
+  finally
+    aCommand.Free;
+  end;
 end;
 
 
@@ -416,52 +351,23 @@ end;
 
 procedure TRedisHandle.KeyDelete(aKey: String);
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('DEL');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
+  FRedisCommand.Clear.Add('DEL').Add(aKey);
+  //发送,读取应答并解析
+  SendCommandWithNoResponse(FRedisCommand);
 end;
 
 function TRedisHandle.KeyExist(aKey: String): Boolean;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('EXISTS');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  Result := ReadIntegerResponse() <> 0;
-
+  FRedisCommand.Clear.Add('EXISTS').Add(aKey);
+  //发送,读取应答并解析
+  Result := SendCommandWithIntResponse(FRedisCommand) <> 0;
 end;
 
 procedure TRedisHandle.KeySetExpire(aKey: String; aExpireSec: Integer);
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('EXPIRE');
-  FCmdList.Add(aKey);
-  FCmdList.Add(IntToStr(aExpireSec));
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-
-
+  FRedisCommand.Clear.Add('EXPIRE').Add(aKey).Add(IntToStr(aExpireSec));
+  //发送,读取应答并解析
+  SendCommandWithNoResponse(FRedisCommand);
 end;
 
 function TRedisHandle.ListRange(aKey: string; aBegin, aEnd: Integer;
@@ -469,19 +375,11 @@ function TRedisHandle.ListRange(aKey: string; aBegin, aEnd: Integer;
 var
   i: Integer;
 begin
-  Connection := True;
+  FRedisCommand.Clear.Add('LRANGE').Add(aKey)
+    .Add(IntToStr(aBegin)).Add(IntToStr(aEnd));
 
-  FCmdList.Clear;
-  FCmdList.Add('LRANGE');
-  FCmdList.Add(aKey);
-  FCmdList.Add(IntToStr(aBegin));
-  FCmdList.Add(IntToStr(aEnd));
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
+  //发送
+  SendCommandAndGetResponse(FRedisCommand, FResponseList);
 
   Result := StrToInt(FResponseList.Strings[1]);
 
@@ -498,55 +396,25 @@ end;
 
 function TRedisHandle.ListRemove(aKey, aValue: string; aCount: Integer): Integer;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('LREM');
-  FCmdList.Add(aKey);
-  FCmdList.Add(IntToStr(aCount));
-  FCmdList.Add(aValue);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  ReadAndParseResponse(FResponseList);
-
-  Result := StrToInt(FResponseList.Strings[1]);
+  FRedisCommand.Clear.Add('LREM').Add(aKey).Add(IntToStr(aCount)).Add(aValue);
+  //发送
+  Result := SendCommandWithIntResponse(FRedisCommand);
 end;
-
 
 
 function TRedisHandle.ListLen(aKey: string): Integer;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('LLEN');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  Result := ReadIntegerResponse();
-
+  FRedisCommand.Clear.Add('LLEN').Add(aKey);
+  //发送
+  Result := SendCommandWithIntResponse(FRedisCommand);
 end;
 
 
 function TRedisHandle.ListLPop(aKey: string): string;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('LPOP');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答
-  Result := ReadStringResponse();
+  FRedisCommand.Clear.Add('LPOP').Add(aKey);
+  //发送
+  Result := SendCommandWithStrResponse(FRedisCommand);
 
 end;
 
@@ -562,37 +430,21 @@ var
 begin
   if Length(aValues) <= 0 then RaiseErr('无数据');
 
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('LPUSH');
-  FCmdList.Add(aKey);
+  FRedisCommand.Clear.Add('LPUSH').Add(aKey);
   for i := 0 to Length(aValues) - 1 do
-    FCmdList.Add(aValues[i]);
+    FRedisCommand.Add(aValues[i]);
 
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  Result := ReadIntegerResponse();
+  //发送
+  Result := SendCommandWithIntResponse(FRedisCommand);
 
 end;
 
 function TRedisHandle.ListRPop(aKey: string): string;
 begin
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('RPOP');
-  FCmdList.Add(aKey);
-
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答
-  Result := ReadStringResponse();
+  FRedisCommand.Clear.Add('RPOP').Add(aKey);
+  //发送
+  Result := SendCommandWithStrResponse(FRedisCommand);
 end;
-
 
 
 
@@ -609,23 +461,14 @@ var
 begin
   if Length(aValues) <= 0 then RaiseErr('无数据');
 
-  Connection := True;
-
-  FCmdList.Clear;
-  FCmdList.Add('RPUSH');
-  FCmdList.Add(aKey);
+  FRedisCommand.Clear.Add('RPUSH').Add(aKey);
   for i := 0 to Length(aValues) - 1 do
-    FCmdList.Add(aValues[i]);
+    FRedisCommand.Add(aValues[i]);
 
-  //发送名称
-  SendCmds(FCmdList);
-
-  //读取应答并解析
-  Result := ReadIntegerResponse();
+  //发送
+  Result := SendCommandWithIntResponse(FRedisCommand);
 
 end;
-
-
 
 
 procedure TRedisHandle.NewTcpClient;
@@ -642,38 +485,79 @@ begin
   end;
 
   FTcpClient := TIdTCPClient.Create(nil);
-  FTcpClient.ReadTimeout := FReadTimeout;
 end;
 
-{
-发送命令：
-  *<参数数量> CR LF
-  $<参数 1 的字节数量> CR LF
-  <参数 1 的数据> CR LF
-  ...
-  $<参数 N 的字节数量> CR LF
-  <参数 N 的数据> CR LF
-}
-procedure TRedisHandle.SendCmds(aCmdList: TStringList);
-var
-  aCmd: string;
-  aBuff: TBytes;
-  i: Integer;
+function TRedisHandle.SendCommandWithIntResponse(
+  aRedisCommand: TRedisCommand): Integer;
 begin
+  SendCommandAndGetResponse(aRedisCommand, FResponseList);
 
-  //参数个数
-  aCmd := '*' + IntToStr(aCmdList.Count) + C_CRLF;
-  //参数
-  for i := 0 to aCmdList.Count - 1 do
-  begin
-    aCmd := aCmd + '$' + IntToStr(TEncoding.UTF8.GetByteCount(aCmdList.Strings[i])) + C_CRLF
-      + aCmdList.Strings[i] + C_CRLF;
+  Result := StrToInt(FResponseList.Strings[1]);
+end;
+
+procedure TRedisHandle.SendCommandWithNoResponse(aRedisCommand: TRedisCommand);
+begin
+  SendCommandAndGetResponse(aRedisCommand, FResponseList);
+end;
+
+function TRedisHandle.SendCommandWithStrResponse(
+  aRedisCommand: TRedisCommand): string;
+begin
+  SendCommandAndGetResponse(aRedisCommand, FResponseList);
+
+  if StrToInt(FResponseList.Strings[1]) <= 0 then Exit('');
+
+  Result := FResponseList.Strings[2];
+end;
+
+
+
+procedure TRedisHandle.SendCommand(aRedisCommand: TRedisCommand);
+var
+  aBuff: TBytes;
+begin
+  aBuff := aRedisCommand.ToRedisCommand;
+
+  try
+    FTcpClient.IOHandler.Write(aBuff);
+  except
+    on E: EIdException do
+    begin
+      NewTcpClient;
+      raise e;
+    end;
   end;
-  aBuff := TEncoding.UTF8.GetBytes(aCmd);
-
-  FTcpClient.IOHandler.Write(aBuff);
 
 end;
+
+procedure TRedisHandle.SendCommandAndGetResponse(aRedisCommand: TRedisCommand;
+  var aResponseList: TStringList);
+var
+  isHandled: Boolean;
+begin
+  Connection := True;
+
+  SendCommand(aRedisCommand);
+  try
+    ReadAndParseResponse(aResponseList);
+  except
+    on E: ERedisErrorReply do
+    begin
+      if Assigned(FOnGetRedisError) then
+      begin
+        FOnGetRedisError(aRedisCommand, aResponseList, e.Message, isHandled);
+        if isHandled then Exit;
+      end;
+
+      raise e;
+
+    end;
+  end;
+
+end;
+
+
+
 
 procedure TRedisHandle.SetConnection(const Value: Boolean);
 begin
@@ -682,11 +566,13 @@ begin
   try
     if Value then
     begin
-      if FIp = '' then FIp := '127.0.0.1';
-      if FPort = 0 then FPort := 6379;
+      if FIp = '' then FIp := Redis_Default_Ip;
+      if FPort <= 0 then FPort := Redis_Default_Port;
+      if FReadTimeout <= 0 then FReadTimeout := Redis_default_ReadTimeout;
 
       FTcpClient.Host := FIp;
       FTcpClient.Port := FPort;
+      FTcpClient.ReadTimeout := FReadTimeout;
       FTcpClient.Connect;
 
       if Password <> '' then RedisAuth;
@@ -697,6 +583,7 @@ begin
     begin
       FTcpClient.Disconnect;
     end;
+
   except
     on E: EIdException do
     begin
@@ -706,7 +593,6 @@ begin
   end;
 
 
-
 end;
 
 procedure TRedisHandle.SetDb(const Value: Integer);
@@ -714,15 +600,23 @@ begin
   FDb := Value;
 end;
 
+
 procedure TRedisHandle.SetIp(const Value: string);
 begin
   FIp := Value;
+end;
+
+procedure TRedisHandle.SetOnGetRedisError(const Value: TOnGetRedisError);
+begin
+  FOnGetRedisError := Value;
 end;
 
 procedure TRedisHandle.SetPassword(const Value: string);
 begin
   FPassword := Value;
 end;
+
+
 
 procedure TRedisHandle.SetPort(const Value: Integer);
 begin

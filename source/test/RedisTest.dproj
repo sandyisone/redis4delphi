@@ -49,6 +49,10 @@
 			</DelphiCompile>
 			<DCCReference Include="..\main\uRedisHandle.pas"/>
 			<DCCReference Include="TestuRedisHandle.pas"/>
+			<DCCReference Include="..\main\uRedisClusterHandle.pas"/>
+			<DCCReference Include="..\main\uRedisCommand.pas"/>
+			<DCCReference Include="..\main\uRedisCommon.pas"/>
+			<DCCReference Include="TestuRedisClusterHandle.pas"/>
 			<BuildConfiguration Include="Base">
 				<Key>Base</Key>
 			</BuildConfiguration>
