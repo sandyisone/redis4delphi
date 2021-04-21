@@ -7,7 +7,7 @@ interface
 
 uses
   Classes, uRedisHandle, uRedisCommand, SysUtils, StrUtils, uRedisCommon,
-  Contnrs;
+  Contnrs, uRedisClusterCRC16, Generics.Collections;
 
 type
   //reids cluster exception
@@ -15,6 +15,7 @@ type
 
   TRedisClusterHandle = class
   private
+    FSlotCache: TDictionary<Integer, TRedisHandle>;
     FRedisList: TObjectList;
     FReadTimeout: Integer;
     FPassword: string;
@@ -36,12 +37,9 @@ type
     //新创建节点
     function NewNode(aIp: string; aPort: Integer): TRedisHandle;
     //获取一个节点，无异常
-    function GetAndChekNode: TRedisHandle;
+    function GetAndChekNode(aKey: string): TRedisHandle;
 
   protected
-    //发送命令解析应答
-    procedure SendCommandAndGetResponse(aRedisCommand: TRedisCommand;
-      var aResponseList: TStringList);
 
   //当redis应答错误时，回调此函数，如isHandled返回true，则提示成功，否则弹异常
     procedure DoOnGetRedisError(aRedisCommand: TRedisCommand;
@@ -68,9 +66,11 @@ type
 
     ////////////////////////////////////////////////////////////////////////////
     ///                     String
-    //Redis Get 命令用于获取指定 key 的值。如果 key 不存在，返回 nil 。如果key 储存的值不是字符串类型，返回一个错误。
+    //Redis Get 命令用于获取指定 key 的值。如果 key 不存在，返回 nil 。
+    //如果key 储存的值不是字符串类型，返回一个错误。
     function StringGet(aKey: string): string;
-    //Redis SET 命令用于设置给定 key 的值。如果 key 已经存储其他值， SET 就覆写旧值，且无视类型。
+    //Redis SET 命令用于设置给定 key 的值。如果 key 已经存储其他值，
+    //SET 就覆写旧值，且无视类型。
     procedure StringSet(aKey, aValue: String); overload;
     //Redis Getset 命令用于设置指定 key 的值，并返回 key 的旧值。
     function StringGetSet(aKey, aValue: String): String;
@@ -78,18 +78,8 @@ type
     //set 带超时（秒）
     procedure StringSet(aKey, aValue: String; aExpireSec: Int64); overload;
     ////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
-
-
-
-
-
-
-
+    //缓存
+    property SlotCache: TDictionary<Integer, TRedisHandle> read FSlotCache;
 
     //redis 读超时
     property ReadTimeout: Integer read FReadTimeout write SetReadTimeout;
@@ -123,11 +113,14 @@ begin
   FReadTimeout := Redis_default_ReadTimeout;
   FPassword := Redis_Default_Password;
 
+  FSlotCache := TDictionary<Integer, TRedisHandle>.Create($10000);
+
 end;
 
 destructor TRedisClusterHandle.Destroy;
 begin
   FRedisList.Free;
+  FSlotCache.Free;
   inherited;
 end;
 
@@ -142,7 +135,11 @@ begin
   if not ParseSlotIpPort(aMovedStr, aSlot, aIp, aPort) then
     RaiseErr('未知的MOVED应答：' + aMovedStr);
 
+  //添加或创建一个
   aRedis := AddNode(aIp, aPort);
+
+  //缓存
+  FSlotCache.AddOrSetValue(aSlot, aRedis);
 
   aRedis.SendCommandAndGetResponse(aRedisCommand, aResponseList);
 
@@ -165,32 +162,6 @@ begin
 end;
 
 
-
-procedure TRedisClusterHandle.SendCommandAndGetResponse(
-  aRedisCommand: TRedisCommand; var aResponseList: TStringList);
-var
-  aStr: string;
-begin
-  try
-    inherited;
-  except
-    on e: ERedisErrorReply do
-    begin
-      aStr := Trim(e.Message);
-      //-MOVED 3999 127.0.0.1:6381
-      if StartsText('MOVED', aStr) then
-      begin
-        //处理moved
-        doMovedCommand(aRedisCommand, aResponseList, aStr);
-      end;
-
-      raise e;
-
-    end;
-  end;
-
-end;
-
 procedure TRedisClusterHandle.SetPassword(const Value: string);
 begin
   FPassword := Value;
@@ -205,7 +176,7 @@ function TRedisClusterHandle.StringGet(aKey: string): string;
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   Result := aRedis.StringGet(aKey);
 end;
 
@@ -213,7 +184,7 @@ function TRedisClusterHandle.StringGetSet(aKey, aValue: String): String;
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   Result := aRedis.StringGetSet(aKey, aValue);
 end;
 
@@ -222,7 +193,7 @@ procedure TRedisClusterHandle.StringSet(aKey, aValue: String;
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   aRedis.StringSet(aKey, aValue, aExpireSec);
 end;
 
@@ -230,16 +201,22 @@ procedure TRedisClusterHandle.StringSet(aKey, aValue: String);
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   aRedis.StringSet(aKey, aValue);
 end;
 
-function TRedisClusterHandle.GetAndChekNode: TRedisHandle;
+function TRedisClusterHandle.GetAndChekNode(aKey: string): TRedisHandle;
 var
   i: Integer;
+  aSlot: Integer;
 begin
   if FRedisList.Count <= 0 then
     RaiseErr('无Redis节点');
+
+  //先cache取
+  aSlot := KeyToSlot(aKey);
+
+  if FSlotCache.TryGetValue(aSlot, Result) then Exit;
 
   //找个连上的，
   for i := 0 to FRedisList.Count - 1 do
@@ -282,7 +259,7 @@ procedure TRedisClusterHandle.KeyDelete(aKey: String);
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   aRedis.KeyDelete(aKey);
 end;
 
@@ -290,7 +267,7 @@ function TRedisClusterHandle.KeyExist(aKey: String): Boolean;
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   Result := aRedis.KeyExist(aKey);
 end;
 
@@ -298,9 +275,11 @@ procedure TRedisClusterHandle.KeySetExpire(aKey: String; aExpireSec: Integer);
 var
   aRedis: TRedisHandle;
 begin
-  aRedis := GetAndChekNode;
+  aRedis := GetAndChekNode(aKey);
   aRedis.KeySetExpire(aKey, aExpireSec);
 end;
+
+
 
 function TRedisClusterHandle.NewNode(aIp: string; aPort: Integer): TRedisHandle;
 begin

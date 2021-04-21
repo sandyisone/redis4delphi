@@ -25,7 +25,8 @@ uses
   uRedisClusterHandle in '..\main\uRedisClusterHandle.pas',
   uRedisCommand in '..\main\uRedisCommand.pas',
   uRedisCommon in '..\main\uRedisCommon.pas',
-  TestuRedisClusterHandle in 'TestuRedisClusterHandle.pas';
+  TestuRedisClusterHandle in 'TestuRedisClusterHandle.pas',
+  uRedisClusterCRC16 in '..\main\uRedisClusterCRC16.pas';
 
 {$R *.RES}
 

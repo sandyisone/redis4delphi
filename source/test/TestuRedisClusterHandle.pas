@@ -13,7 +13,7 @@ interface
 
 uses
   TestFramework, uRedisCommand, StrUtils, Classes, uRedisCommon, SysUtils, uRedisHandle,
-  Contnrs, uRedisClusterHandle;
+  Contnrs, uRedisClusterHandle, uRedisClusterCRC16, Generics.Collections;
 
 type
   // Test methods for class TRedisClusterHandle
@@ -24,7 +24,11 @@ type
   public
     procedure SetUp; override;
     procedure TearDown; override;
+  private
+    procedure ShowSlot;
   published
+    procedure TestCrc16;
+
     procedure TestAddNode;
 
     procedure TestStringSetExpire;
@@ -49,6 +53,22 @@ begin
 
   FRedisClusterHandle.Password := 'tcrq1234';
   FRedisClusterHandle.AddNode('192.168.1.80', 6379);
+
+end;
+
+procedure TestTRedisClusterHandle.ShowSlot;
+var
+  aKeys: TDictionary<Integer, TRedisHandle>.TKeyEnumerator;
+  aRedis: TRedisHandle;
+begin
+  aKeys := FRedisClusterHandle.SlotCache.Keys.GetEnumerator;
+
+  while aKeys.MoveNext do
+  begin
+    aRedis := FRedisClusterHandle.SlotCache.Items[aKeys.Current];
+    Status('Slot: ' + IntToStr(aKeys.Current) + ', ' + aRedis.Ip + ':' +
+      IntToStr(aRedis.Port));
+  end;
 
 end;
 
@@ -77,6 +97,22 @@ begin
   // TODO: Validate method results
 end;
 
+procedure TestTRedisClusterHandle.TestCrc16;
+begin
+  CheckTrue(GetCrc16('') = $0, '1 CRC fial');
+  CheckTrue(GetCrc16('123456789') = $31C3, '2 CRC fial');
+  CheckTrue(GetCrc16('sfger132515') = $A45C, '3 CRC fial');
+  CheckTrue(GetCrc16('hae9Napahngaikeethievubaibogiech') = $58CE, '4 CRC fial');
+  CheckTrue(GetCrc16('AAAAAAAAAAAAAAAAAAAAAA') = $92cd, '5 CRC fial');
+  CheckTrue(GetCrc16('Hello, World!') = $4FD6, '6 CRC fial');
+
+  CheckTrue(KeyToSlot('{bar') = KeyToSlot('foo{{bar}}zap'), '10 CRC fial');
+  CheckTrue(KeyToSlot('{user1000}.following') = KeyToSlot('{user1000}.followers'), '11 CRC fial');
+  CheckTrue(KeyToSlot('foo{}{bar}') <> KeyToSlot('bar'), '12 CRC fial');
+  CheckTrue(KeyToSlot('foo{bar}{zap}') = KeyToSlot('bar'), '13 CRC fial');
+
+end;
+
 procedure TestTRedisClusterHandle.TestKey;
 var
   aKey: string;
@@ -98,33 +134,43 @@ begin
   CheckTrue(not FRedisClusterHandle.KeyExist(aKey), 'KeyDelete Fail');
 
   Status('KeyDelete ok');
+
+  ShowSlot;
 end;
 
 procedure TestTRedisClusterHandle.TestStringGetSet;
 var
   aKey, aValue, aNewValue: string;
   i: Integer;
+  j: Integer;
 begin
-  for i := 0 to 9 do
+  for j := 0 to 1 do
   begin
-    aKey := C_Key_Pre + IntToStr(i);
-    aNewValue := 'new:' + IntToStr(i);
-    aValue := 'old:' + IntToStr(i);
+    for i := 0 to 9 do
+    begin
+      aKey := C_Key_Pre + IntToStr(i);
+      aNewValue := 'new:' + IntToStr(i);
+      aValue := 'old:' + IntToStr(i);
 
-    FRedisClusterHandle.StringSet(aKey, aValue);
-    CheckTrue(aValue = FRedisClusterHandle.StringGetSet(aKey, aNewValue));
+      FRedisClusterHandle.StringSet(aKey, aValue);
+      CheckTrue(aValue = FRedisClusterHandle.StringGetSet(aKey, aNewValue));
 
-    CheckTrue(aNewValue = FRedisClusterHandle.StringGet(aKey), 'StringGetSet fail');
-    Status(aKey + ' : ' + aValue + ',' + aNewValue);
+      CheckTrue(aNewValue = FRedisClusterHandle.StringGet(aKey), 'StringGetSet fail');
+      Status(aKey + ' : ' + aValue + ',' + aNewValue);
+    end;
+    ShowSlot;
+
   end;
+
+
 
 end;
 
 procedure TestTRedisClusterHandle.TestStringSetExpire;
 var
+  i: Integer;
   aValue: string;
   aKey: string;
-  i: Integer;
 begin
   for i := 0 to 9 do
   begin
@@ -134,6 +180,8 @@ begin
 
     Status('Set ' + aKey + ' : ' + aValue);
   end;
+
+  ShowSlot;
 
 end;
 

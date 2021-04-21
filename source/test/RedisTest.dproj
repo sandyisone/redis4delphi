@@ -53,6 +53,7 @@
 			<DCCReference Include="..\main\uRedisCommand.pas"/>
 			<DCCReference Include="..\main\uRedisCommon.pas"/>
 			<DCCReference Include="TestuRedisClusterHandle.pas"/>
+			<DCCReference Include="..\main\uRedisClusterCRC16.pas"/>
 			<BuildConfiguration Include="Base">
 				<Key>Base</Key>
 			</BuildConfiguration>
